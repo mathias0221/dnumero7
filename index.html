@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lector de Códigos QR</title>
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #f0f0f0;
+        }
+
+        .container {
+            max-width: 800px;
+            width: 100%;
+            text-align: center;
+        }
+
+        .video-container {
+            position: relative;
+            margin: 20px 0;
+            width: 100%;
+            max-width: 640px;
+            background: #000;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        #video {
+            width: 100%;
+            height: auto;
+            border-radius: 8px;
+        }
+
+        .controls {
+            margin: 20px 0;
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        button {
+            padding: 12px 24px;
+            font-size: 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+
+        button:hover {
+            background-color: #45a049;
+        }
+
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+
+        #resultado {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            font-size: 18px;
+            min-height: 60px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        #canvas {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        .mensaje-error {
+            color: #ff0000;
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #ffe6e6;
+            border-radius: 4px;
+            display: none;
+        }
+
+        .historial {
+            margin-top: 20px;
+            width: 100%;
+            max-height: 200px;
+            overflow-y: auto;
+            background: white;
+            border-radius: 8px;
+            padding: 10px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .historial-item {
+            padding: 8px;
+            border-bottom: 1px solid #eee;
+            text-align: left;
+        }
+
+        .historial-item:last-child {
+            border-bottom: none;
+        }
+
+        @media (max-width: 600px) {
+            .container {
+                padding: 10px;
+            }
+            
+            button {
+                padding: 10px 20px;
+                font-size: 14px;
+            }
+        }
+
+        .linterna-btn {
+            position: fixed;
+            left: 20px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background: #4CAF50;
+            border: none;
+            color: white;
+            font-size: 24px;
+            cursor: pointer;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            z-index: 1000;
+        }
+
+        .linterna-btn.active {
+            background: #ff9800;
+        }
+    </style>
+</head>
+<body>
+    <button id="linterna" class="linterna-btn">
+        <i class="fas fa-lightbulb"></i>
+    </button>
+
+    <div class="container">
+        <h1>Lector de Códigos QR</h1>
+        
+        <div class="video-container">
+            <video id="video" autoplay playsinline></video>
+            <canvas id="canvas"></canvas>
+        </div>
+
+        <div class="controls">
+            <button id="iniciarCamara">Abrir Cámara</button>
+            <button id="detenerCamara" disabled>Cerrar Cámara</button>
+            <button id="cambiarCamara" disabled>Cambiar Cámara</button>
+            <button id="limpiarHistorial" disabled>Limpiar Historial</button>
+        </div>
+
+        <div id="resultado">
+            Esperando código QR...
+        </div>
+
+        <div class="historial" id="historial">
+            <!-- Aquí se mostrarán los códigos QR escaneados -->
+        </div>
+
+        <div id="mensajeError" class="mensaje-error"></div>
+    </div>
+
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const resultado = document.getElementById('resultado');
+        const mensajeError = document.getElementById('mensajeError');
+        const historial = document.getElementById('historial');
+        const btnIniciar = document.getElementById('iniciarCamara');
+        const btnDetener = document.getElementById('detenerCamara');
+        const btnCambiar = document.getElementById('cambiarCamara');
+        const btnLimpiar = document.getElementById('limpiarHistorial');
+        const btnLinterna = document.getElementById('linterna');
+        
+        let stream = null;
+        let procesando = false;
+        let camaraActual = 'environment';
+        let ultimoQR = '';
+        let historialCodigos = [];
+        let linternaActiva = false;
+
+        // Verificar soporte de la API MediaDevices
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            mostrarError('Tu navegador no soporta el acceso a la cámara. Por favor, usa un navegador más moderno.');
+            btnIniciar.disabled = true;
+        }
+
+        function mostrarError(mensaje) {
+            mensajeError.textContent = mensaje;
+            mensajeError.style.display = 'block';
+            setTimeout(() => {
+                mensajeError.style.display = 'none';
+            }, 5000);
+        }
+
+        function agregarAlHistorial(codigo) {
+            if (!historialCodigos.includes(codigo)) {
+                historialCodigos.unshift(codigo);
+                actualizarHistorialUI();
+                btnLimpiar.disabled = false;
+            }
+        }
+
+        function actualizarHistorialUI() {
+            historial.innerHTML = historialCodigos
+                .map(codigo => `<div class="historial-item">${codigo}</div>`)
+                .join('');
+        }
+
+        function limpiarHistorial() {
+            historialCodigos = [];
+            historial.innerHTML = '';
+            btnLimpiar.disabled = true;
+        }
+
+        async function verificarPermisosCamara() {
+            try {
+                const result = await navigator.permissions.query({ name: 'camera' });
+                if (result.state === 'denied') {
+                    mostrarError('No se puede acceder a la cámara. Por favor, permite el acceso en la configuración de tu navegador.');
+                    return false;
+                }
+                return true;
+            } catch (error) {
+                console.log('No se puede verificar permisos:', error);
+                return true;
+            }
+        }
+
+        async function iniciarCamara() {
+            try {
+                if (!await verificarPermisosCamara()) {
+                    return;
+                }
+
+                const constraints = {
+                    video: {
+                        facingMode: camaraActual,
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    }
+                };
+
+                stream = await navigator.mediaDevices.getUserMedia(constraints);
+                video.srcObject = stream;
+                btnIniciar.disabled = true;
+                btnDetener.disabled = false;
+                btnCambiar.disabled = false;
+
+                video.onloadedmetadata = () => {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    detectarQR();
+                };
+
+                mensajeError.style.display = 'none';
+            } catch (error) {
+                console.error('Error al acceder a la cámara:', error);
+                if (error.name === 'NotAllowedError') {
+                    mostrarError('Acceso a la cámara denegado. Por favor, permite el acceso en la configuración de tu navegador.');
+                } else if (error.name === 'NotFoundError') {
+                    mostrarError('No se encontró ninguna cámara en tu dispositivo.');
+                } else {
+                    mostrarError('Error al acceder a la cámara: ' + error.message);
+                }
+            }
+        }
+
+        function detenerCamara() {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                video.srcObject = null;
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                resultado.textContent = 'Esperando código QR...';
+                btnIniciar.disabled = false;
+                btnDetener.disabled = true;
+                btnCambiar.disabled = true;
+                ultimoQR = '';
+            }
+        }
+
+        async function cambiarCamara() {
+            camaraActual = camaraActual === 'environment' ? 'user' : 'environment';
+            detenerCamara();
+            await iniciarCamara();
+        }
+
+        async function toggleLinterna() {
+            if (!stream) return;
+            
+            try {
+                const track = stream.getVideoTracks()[0];
+                const capabilities = track.getCapabilities();
+                
+                // Verificar si el dispositivo tiene linterna
+                if (capabilities.torch) {
+                    linternaActiva = !linternaActiva;
+                    await track.applyConstraints({
+                        advanced: [{ torch: linternaActiva }]
+                    });
+                    btnLinterna.classList.toggle('active', linternaActiva);
+                } else {
+                    mostrarError('Tu dispositivo no tiene linterna o no se puede acceder a ella');
+                }
+            } catch (error) {
+                console.error('Error al controlar la linterna:', error);
+                mostrarError('No se pudo controlar la linterna');
+            }
+        }
+
+        function detectarQR() {
+            if (!stream || procesando) {
+                requestAnimationFrame(detectarQR);
+                return;
+            }
+            
+            procesando = true;
+            
+            try {
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                const code = jsQR(imageData.data, imageData.width, imageData.height, {
+                    inversionAttempts: 'dontInvert' // Optimización para mejorar FPS
+                });
+                
+                if (code) {
+                    // Si encontramos un código QR y es diferente al último
+                    if (code.data !== ultimoQR) {
+                        ultimoQR = code.data;
+                        resultado.textContent = code.data;
+                        agregarAlHistorial(code.data);
+
+                        // Dibujar un rectángulo alrededor del código QR
+                        ctx.beginPath();
+                        ctx.lineWidth = 4;
+                        ctx.strokeStyle = "#FF3B58";
+                        ctx.moveTo(code.location.topLeftCorner.x, code.location.topLeftCorner.y);
+                        ctx.lineTo(code.location.topRightCorner.x, code.location.topRightCorner.y);
+                        ctx.lineTo(code.location.bottomRightCorner.x, code.location.bottomRightCorner.y);
+                        ctx.lineTo(code.location.bottomLeftCorner.x, code.location.bottomLeftCorner.y);
+                        ctx.lineTo(code.location.topLeftCorner.x, code.location.topLeftCorner.y);
+                        ctx.stroke();
+                    }
+                }
+                
+                procesando = false;
+                requestAnimationFrame(detectarQR);
+            } catch (error) {
+                console.error('Error en la detección:', error);
+                procesando = false;
+                requestAnimationFrame(detectarQR);
+            }
+        }
+
+        btnIniciar.addEventListener('click', iniciarCamara);
+        btnDetener.addEventListener('click', detenerCamara);
+        btnCambiar.addEventListener('click', cambiarCamara);
+        btnLimpiar.addEventListener('click', limpiarHistorial);
+        btnLinterna.addEventListener('click', toggleLinterna);
+
+        // Verificar permisos al cargar la página
+        window.onload = async () => {
+            await verificarPermisosCamara();
+        };
+    </script>
+</body>
+</html> 
